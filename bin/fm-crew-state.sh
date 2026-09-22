@@ -788,6 +788,12 @@ nm_effective_ci_step_status() {
 # for the MOST RECENT recognized marker (the log is append-only/chronological,
 # so the last match is current): green with nothing red after it means CI is
 # green right now, still only waiting on merge/close.
+# "base branch advanced (..), re-arming CI monitor timeout" is deliberately NOT
+# a marker: the monitor logs a checks state only when that state changes, and a
+# base advance re-arms only its idle timeout without clearing readiness, so the
+# green marker before it is still current (no-mistakes' own ci-log parser
+# ignores the line the same way, v1.32.2 through v1.79.0). Reading it as
+# not-ready held a green PR at working for as long as main kept advancing.
 nm_ci_checks_state() {
   local run_id log_tail marker
   run_id=$(strip_quotes "$(nm_field id)")
@@ -795,11 +801,11 @@ nm_ci_checks_state() {
   log_tail=$(nm_run axi logs --step ci --run "$run_id") || true
   [ -n "$log_tail" ] || { printf 'unknown'; return; }
   marker=$(printf '%s\n' "$log_tail" \
-    | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running|base branch advanced.*re-arming CI monitor timeout' \
+    | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running' \
     | tail -1)
   case "$marker" in
     *"checks passed"*|*"no CI checks reported - still monitoring"*) printf 'green' ;;
-    *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*|*"base branch advanced"*"re-arming CI monitor timeout"*) printf 'not-ready' ;;
+    *"no CI checks reported yet"*|*"checks failed"*|*"issues detected"*|*"CI checks running"*) printf 'not-ready' ;;
     *) printf 'unknown' ;;
   esac
 }
@@ -1063,6 +1069,10 @@ if [ "$HAVE_RUN" = 1 ]; then
             if [ "$CI_LOG_STATE" = green ]; then
               RUN_STATE="done"
               RUN_DETAIL="checks green: PR ready for review (still monitoring for merge/close)"
+              # The run's own PR URL makes this reading actionable even when
+              # the worker never reported it and no pr= was recorded.
+              ci_pr_url=$(strip_quotes "$(nm_field pr)")
+              [ -z "$ci_pr_url" ] || RUN_DETAIL="$RUN_DETAIL: $ci_pr_url"
             fi
             ;;
           fixing)
