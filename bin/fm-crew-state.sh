@@ -784,8 +784,8 @@ nm_effective_ci_step_status() {
 # monitoring until merged or closed" or "no CI checks reported - still
 # monitoring until merged or closed" (verified against 360+ real run logs under
 # ~/.no-mistakes/logs/*/ci.log on the installed v1.32.2 binary, including the
-# actual PR #252 run). Reads the ci step's log tail via `axi logs` and scans it
-# for the MOST RECENT recognized marker (the log is append-only/chronological,
+# actual PR #252 run). Reads the ci step's log via `axi logs --full` and scans
+# it for the MOST RECENT recognized marker (the log is append-only/chronological,
 # so the last match is current): green with nothing red after it means CI is
 # green right now, still only waiting on merge/close.
 # "base branch advanced (..), re-arming CI monitor timeout" is deliberately NOT
@@ -795,12 +795,12 @@ nm_effective_ci_step_status() {
 # ignores the line the same way, v1.32.2 through v1.79.0). Reading it as
 # not-ready held a green PR at working for as long as main kept advancing.
 nm_ci_checks_state() {
-  local run_id log_tail marker
+  local run_id ci_log marker
   run_id=$(strip_quotes "$(nm_field id)")
   [ -n "$run_id" ] || { printf 'unknown'; return; }
-  log_tail=$(nm_run axi logs --step ci --run "$run_id") || true
-  [ -n "$log_tail" ] || { printf 'unknown'; return; }
-  marker=$(printf '%s\n' "$log_tail" \
+  ci_log=$(nm_run axi logs --step ci --run "$run_id" --full) || true
+  [ -n "$ci_log" ] || { printf 'unknown'; return; }
+  marker=$(printf '%s\n' "$ci_log" \
     | grep -E 'CI checks passed|no CI checks reported - still monitoring|no CI checks reported yet|checks failed|issues detected|CI checks running' \
     | tail -1)
   case "$marker" in

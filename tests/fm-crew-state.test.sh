@@ -97,7 +97,19 @@ case "${1:-}" in
           exit "${FM_FAKE_AXI_STATUS_ERROR:-0}"
         fi ;;
       logs)
-        printf '%s\n' "${FM_FAKE_CI_LOGS:-}" ;;
+        shift
+        # The real CLI prints only the last 40 log lines ("lines: 40 of N
+        # total (tail)", verified against v1.79.0) unless --full asks for the
+        # whole log, so a marker older than that is invisible to a plain read.
+        full=0
+        for arg in "$@"; do
+          [ "$arg" = --full ] && full=1
+        done
+        if [ "$full" = 1 ]; then
+          printf '%s\n' "${FM_FAKE_CI_LOGS:-}"
+        else
+          printf '%s\n' "${FM_FAKE_CI_LOGS:-}" | tail -40
+        fi ;;
     esac
     ;;
   runs)
@@ -1190,6 +1202,33 @@ EOF
   assert_contains "$out" "https://github.com/o/r/pull/2" "the held-for-merge reading names the run's PR"
   assert_not_contains "$out" "state: working" "a re-arm line must not read as checks not ready"
   pass "base-advance re-arm after green stays checks green"
+}
+
+# The same green-then-re-arm shape, but monitored long enough that the base
+# advanced past the CLI's 40-line log tail: `axi logs` without --full would
+# answer with re-arm lines only, hiding the green marker entirely, and the
+# green PR would read as still working for as long as main kept moving.
+test_ci_monitoring_green_before_log_tail_stays_green() {
+  reset_fakes
+  local d; d=$(new_case ci-green-beyond-tail)
+  make_repo_on_branch "$d/wt" fm/feat-citail
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-citail.meta" "window=fm:fm-feat-citail" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_ci_monitoring fm/feat-citail)"
+  FM_FAKE_CI_LOGS=$({
+    printf 'monitoring CI for PR #2 (timeout: 4h0m0s)...\n'
+    printf 'all CI checks passed - still monitoring until merged or closed\n'
+    for i in $(seq 1 60); do
+      printf 'base branch advanced (%07d..%07d), re-arming CI monitor timeout\n' "$i" "$((i + 1))"
+    done
+  })
+  local out; out=$(run_crew_state "$d" feat-citail)
+  assert_contains "$out" "state: done" "a green marker older than the log tail still reads green"
+  assert_contains "$out" "source: run-step" "the full-log green reading stays run-step sourced"
+  assert_contains "$out" "checks green: PR ready for review" "the full-log reading is held for merge"
+  assert_contains "$out" "https://github.com/o/r/pull/2" "the full-log reading names the run's PR"
+  assert_not_contains "$out" "state: working" "a truncated ci log must not hide a green PR"
+  pass "a green marker before the ci log tail still surfaces done"
 }
 
 test_ci_monitoring_no_checks_yet_stays_working() {
@@ -4991,6 +5030,7 @@ test_ci_monitoring_checks_green_surfaces_done
 test_top_level_ci_checks_green_surfaces_done
 test_ci_monitoring_no_checks_terminal_surfaces_done
 test_ci_monitoring_green_then_rearm_stays_green
+test_ci_monitoring_green_before_log_tail_stays_green
 test_ci_monitoring_no_checks_yet_stays_working
 test_ci_monitoring_still_waiting_stays_working
 test_ci_monitoring_green_then_new_issue_stays_working
