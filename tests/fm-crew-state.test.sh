@@ -1124,7 +1124,7 @@ test_ci_ready_done_log_beats_monitoring_run() {
 
 # Regression for the PR #252 incident: the crew's own status log never got a
 # "done: ... checks green" line (log_reports_ci_ready above does not apply),
-# but the ci step's log tail shows CI is actually green and only waiting on
+# but the ci step's log shows CI is actually green and only waiting on
 # merge/close. fm-crew-state must surface this as done, not "validating
 # (running)", so a green PR is never silently absorbed as still-in-progress.
 test_ci_monitoring_checks_green_surfaces_done() {
@@ -1266,7 +1266,7 @@ test_ci_monitoring_still_waiting_stays_working() {
 }
 
 # A later merge-conflict auto-fix round after an earlier green reading must
-# not be masked: the MOST RECENT marker in the log tail wins.
+# not be masked: the MOST RECENT marker in the ci log wins.
 test_ci_monitoring_green_then_new_issue_stays_working() {
   reset_fakes
   local d; d=$(new_case ci-green-then-issue)
