@@ -1431,28 +1431,58 @@ fm_pending_reply_tick_one() {  # <state-dir> <corr_id> <busy_state> [secondmate-
   return 0
 }
 
+# Read the fields the tick triages on from one record in a single in-shell
+# pass, with fm_pending_reply_get's semantics (the last line for a key wins and
+# the value is everything after its first `=`). Sets _FM_PR_CORR, _FM_PR_TASK,
+# _FM_PR_PHASE, _FM_PR_ESCALATED, and _FM_PR_CLOSED; an unreadable record
+# leaves them empty.
+_fm_pending_reply_triage_fields() {  # <record-path>
+  local line
+  _FM_PR_CORR='' _FM_PR_TASK='' _FM_PR_PHASE='' _FM_PR_ESCALATED='' _FM_PR_CLOSED=''
+  [ -r "$1" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      corr_id=*) _FM_PR_CORR=${line#*=} ;;
+      task_id=*) _FM_PR_TASK=${line#*=} ;;
+      phase=*) _FM_PR_PHASE=${line#*=} ;;
+      escalated_epoch=*) _FM_PR_ESCALATED=${line#*=} ;;
+      escalation_closed_epoch=*) _FM_PR_CLOSED=${line#*=} ;;
+    esac
+  done < "$1"
+}
+
 # Scan every pending record for this parent state. Safe to call every poll.
 # Never scrapes secondmate conversation; uses only parent status, backend busy
 # state, and optional secondmate-home wrong-home path checks.
-fm_pending_reply_tick() {  # <state-dir>
-  local state=$1 dir rec corr task_id phase delivered meta backend target label busy sm_home harness remote_host
+# Resolved records are retained, so a long-lived home carries far more of them
+# than open ones; each costs one in-shell read here and nothing more unless its
+# escalation close is still owed. The optional progress command runs before
+# every record so a caller (the watcher's liveness beacon) can show it is still
+# advancing through a long scan.
+fm_pending_reply_tick() {  # <state-dir> [progress-command]
+  local state=$1 progress=${2:-} dir rec corr task_id phase delivered meta backend target label busy sm_home harness remote_host
   local observation observation_task found i
   local -a observation_tasks=() observation_values=()
   dir=$(fm_pending_reply_dir "$state")
   [ -d "$dir" ] || return 0
   for rec in "$dir"/*; do
+    [ -z "$progress" ] || "$progress"
     [ -f "$rec" ] || continue
-    case "$(basename "$rec")" in
+    case "${rec##*/}" in
       .*) continue ;;
     esac
-    corr=$(fm_pending_reply_get "$rec" corr_id)
-    [ -n "$corr" ] || corr=$(basename "$rec")
-    task_id=$(fm_pending_reply_get "$rec" task_id)
-    phase=$(fm_pending_reply_get "$rec" phase)
+    _fm_pending_reply_triage_fields "$rec"
+    corr=$_FM_PR_CORR
+    [ -n "$corr" ] || corr=${rec##*/}
+    task_id=$_FM_PR_TASK
+    phase=$_FM_PR_PHASE
     if [ "$phase" = resolved ]; then
-      # Cheap no-op unless an escalation for this record is still open; this is
-      # the retry that makes the close converge after a transient write failure.
-      fm_pending_reply_close_escalation "$state" "$corr" || true
+      # A no-op unless an escalation for this record was opened and never
+      # closed; this is the retry that makes the close converge after a
+      # transient write failure. The locked close re-verifies both fields.
+      if [ -n "$_FM_PR_ESCALATED" ] && [ -z "$_FM_PR_CLOSED" ]; then
+        fm_pending_reply_close_escalation "$state" "$corr" || true
+      fi
       continue
     fi
     fm_pending_reply_reconcile_delivery "$state" "$corr" || true

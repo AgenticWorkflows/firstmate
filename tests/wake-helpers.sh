@@ -87,6 +87,11 @@ if [ "${1:-}" = "capture-pane" ]; then
       _prev=$_arg
     done
   fi
+  # A slow capture stands in for a loaded host, where every pane read costs
+  # seconds and a poll over many parked panes outlasts the beacon grace.
+  if [ -n "${FM_FAKE_TMUX_CAPTURE_DELAY:-}" ]; then
+    sleep "$FM_FAKE_TMUX_CAPTURE_DELAY"
+  fi
   if [ -n "${FM_FAKE_TMUX_CAPTURE:-}" ]; then
     cat "$FM_FAKE_TMUX_CAPTURE"
   fi

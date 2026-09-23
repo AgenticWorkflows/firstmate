@@ -29,6 +29,8 @@
 #  15. Remote parent-replies.status is not classified as wrong-home
 #  16. An escalated correlation stays retryable while undelivered, is never reset
 #      once delivered, and its delivery-unknown decision still closes on resolve
+#  17. The watcher tick leaves settled resolved records alone, so retained history
+#      never costs a poll more than one read per record
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -1086,6 +1088,60 @@ test_tick_skips_terminal_and_reuses_target_observation() {
   pass "tick skips terminal records and reuses target observations"
 }
 
+test_tick_leaves_settled_resolved_records_alone() {
+  # Resolved records are retained, so a long-lived home carries far more of
+  # them than open ones, and the watcher ticks over all of them every poll. A
+  # settled one (never escalated, or escalated and already closed) owes
+  # nothing, so the tick must not take its per-record lock: holding those locks
+  # here makes the old per-record close path wait forever.
+  local home state plain closed corr rec holder held calls pid i
+  home=$(setup_parent settled-resolved)
+  state="$home/state"
+  # shellcheck disable=SC2031 # Earlier suites set this clock inside their own subshells.
+  export FM_PENDING_REPLY_NOW=10300
+  plain=$(fm_pending_reply_create "$home" "$state" hibit "never escalated")
+  fm_pending_reply_mark_delivered "$state" "$plain"
+  printf 'done [corr=%s]: complete\n' "$plain" > "$state/hibit.status"
+  fm_pending_reply_try_resolve "$state" "$plain" || fail "never-escalated fixture should resolve"
+  closed=$(fm_pending_reply_create "$home" "$state" hibit "escalated then closed")
+  fm_pending_reply_mark_delivered "$state" "$closed"
+  rec=$(fm_pending_reply_path "$state" "$closed")
+  fm_pending_reply_set "$rec" phase resolved
+  fm_pending_reply_set "$rec" escalated_epoch 10200
+  fm_pending_reply_set "$rec" escalation_closed_epoch 10250
+  held="$home/locks-held"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" && fm_lock_try_acquire "$3" || exit 1
+    : > "$4"
+    exec sleep 60
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$state/.pending-reply-$plain.lock" \
+    "$state/.pending-reply-$closed.lock" "$held" &
+  holder=$!
+  for i in $(seq 1 100); do [ -e "$held" ] && break; sleep 0.1; done
+  [ -e "$held" ] || { kill "$holder" 2>/dev/null; fail "could not hold the per-record locks"; }
+  calls="$home/progress-calls"
+  (
+    # shellcheck disable=SC2329 # Invoked by name through the tick's progress hook.
+    count_progress() { printf 'x\n' >> "$calls"; }
+    fm_pending_reply_tick "$state" count_progress
+  ) &
+  pid=$!
+  for i in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" "$holder" 2>/dev/null
+    fail "the tick waited on a settled resolved record's lock"
+  fi
+  wait "$pid" || { kill "$holder" 2>/dev/null; fail "the tick failed over settled resolved records"; }
+  kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+  for corr in "$plain" "$closed"; do
+    [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" phase)" = resolved ] \
+      || fail "a settled resolved record changed phase"
+  done
+  [ "$(wc -l < "$calls" | tr -d ' ')" -ge 2 ] || fail "the tick did not report progress once per record"
+  pass "tick leaves settled resolved records alone and reports progress per record"
+}
+
 test_correlations_reuse_only_for_matching_open_task() {
   local dir fb log home state got corr1 corr2 corr3 rec
   dir="$TMP_ROOT/corr-reuse"; mkdir -p "$dir"
@@ -1629,6 +1685,7 @@ test_busy_idle_observation_via_backend_abstraction
 test_unknown_backend_state_uses_capture_fallback
 test_kimi_capture_fallback_uses_recorded_harness
 test_tick_skips_terminal_and_reuses_target_observation
+test_tick_leaves_settled_resolved_records_alone
 test_correlations_reuse_only_for_matching_open_task
 test_tick_end_to_end_missed_then_escalate
 test_failed_send_discards_undelivered_expectation
