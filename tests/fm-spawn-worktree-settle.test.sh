@@ -248,6 +248,18 @@ test_worktree_wait_window_is_configurable() {
     "the refusal did not name the configured window"
   reads=$(cat "$COUNTFILE")
   [ "$reads" -eq 5 ] || fail "a 5s window polled the pane $reads times"
+
+  id=settle-zero-window-z7
+  rec=$(make_primary_case settle-zero-window "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+  out=$(FM_SPAWN_WORKTREE_WAIT_SECS=00 run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a pane that never settled"$'\n'"$out"
+  assert_contains "$out" "did not enter an isolated worktree within 60s" \
+    "a zero-padded zero window did not fall back to the default"
+  reads=$(cat "$COUNTFILE")
+  [ "$reads" -eq 60 ] || fail "a zero-padded zero window polled the pane $reads times"
   pass "the treehouse-get worktree wait window is configurable"
 }
 

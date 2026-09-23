@@ -3976,7 +3976,9 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # FM_SPAWN_WORKTREE_WAIT_SECS sets that window (docs/configuration.md); a
   # loaded host's pool can take longer than the default to hand a copy over.
   worktree_wait=${FM_SPAWN_WORKTREE_WAIT_SECS:-60}
-  case "$worktree_wait" in ''|0|*[!0-9]*) worktree_wait=60 ;; esac
+  case "$worktree_wait" in ''|*[!0-9]*) worktree_wait=60 ;; esac
+  worktree_wait=$((10#$worktree_wait))
+  [ "$worktree_wait" -ge 1 ] || worktree_wait=60
   candidate=""
   last_seen=""
   last_reason="the pane reported no path"
