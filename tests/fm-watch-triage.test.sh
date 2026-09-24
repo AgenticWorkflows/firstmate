@@ -5817,6 +5817,122 @@ test_beacon_stays_fresh_while_absorbing() {
   pass "the liveness beacon stays fresh while the watcher absorbs benign wakes (fm-guard never false-alarms)"
 }
 
+# Park <count> declared-pause panes whose stale path is already primed, so every
+# poll re-absorbs each one, and print the window list for FM_FAKE_TMUX_WINDOWS.
+park_paused_panes() {  # <state> <capture-file> <count>
+  local state=$1 capture=$2 count=$3 i task window key statusf windows=
+  printf 'idle, holding for upstream' > "$capture"
+  for i in $(seq 1 "$count"); do
+    task="parked$i"; window="test:fm-$task"
+    printf 'window=%s\nkind=ship\n' "$window" > "$state/$task.meta"
+    statusf="$state/$task.status"
+    printf 'paused: holding for the upstream tool release\n' > "$statusf"
+    seen_sig "$statusf" > "$state/.seen-${task}_status"
+    key=$(printf '%s' "$window" | tr ':/.' '___')
+    hash_text "idle, holding for upstream" > "$state/.hash-$key"
+    printf '1\n' > "$state/.count-$key"
+    windows="${windows}fm-$task"$'\n'
+  done
+  printf '%s' "${windows%$'\n'}"
+}
+
+# Wait until the fake tmux has served at least <n> pane captures.
+wait_captures() {  # <count-file> <n> <pid>
+  local file=$1 n=$2 pid=$3 i=0 c
+  while [ "$i" -lt 600 ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    c=$(cat "$file" 2>/dev/null || echo 0)
+    [ "$c" -ge "$n" ] && return 0
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# A second fm-watch.sh against a live holder is exactly what the Claude Stop-hook
+# auto-arm's arm child runs, so its verdict, and the same health predicate the
+# auto-arm itself checks, are the user-visible outcome.
+second_watcher_verdict() {  # <state> <fakebin> <grace> <out>
+  local rc=0
+  PATH="$2:$PATH" FM_STATE_OVERRIDE="$1" FM_GUARD_GRACE="$3" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$4" 2>&1 || rc=$?
+  return "$rc"
+}
+
+watcher_reads_healthy() {  # <state> <grace>
+  FM_STATE_OVERRIDE="$1" bash -c '. "$1"; fm_watcher_healthy "$2" "$3" "$4" "$5"' _ \
+    "$ROOT/bin/fm-wake-lib.sh" "$1" "$WATCH" "$2" "$(cat "$1/.watch.lock/fm-home" 2>/dev/null)"
+}
+
+test_long_poll_over_parked_panes_keeps_beacon_fresh() {
+  # One poll over many parked panes on a loaded host outlasts the beacon grace.
+  # The watcher is alive and advancing through that poll the whole time, so the
+  # auto-arm must attach to it, never refuse it as a live holder with a stale
+  # heartbeat and leave the home unsupervised.
+  local dir state fakebin out probe capture count_file windows pid grace=4 panes=8 age
+  dir=$(make_case long-poll-parked); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; probe="$dir/probe.out"; capture="$dir/pane.txt"; count_file="$dir/captures"
+  windows=$(park_paused_panes "$state" "$capture" "$panes")
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOWS="$windows" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TMUX_CAPTURE_DELAY=1 FM_FAKE_TMUX_CAPTURE_COUNT_FILE="$count_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999 \
+    FM_GUARD_GRACE="$grace" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  # Six panes into the second poll, one top-of-poll beacon touch alone would be
+  # at least six seconds old against a four-second grace.
+  wait_captures "$count_file" $(( panes + 6 )) "$pid" \
+    || { reap "$pid"; fail "watcher exited or stalled before its second long poll: $(cat "$out")"; }
+  age=$(( $(date +%s) - $(file_mtime "$state/.last-watcher-beat") ))
+  [ "$age" -lt "$grace" ] \
+    || { reap "$pid"; fail "a progressing watcher's beacon aged ${age}s mid-poll (grace ${grace}s)"; }
+  watcher_reads_healthy "$state" "$grace" \
+    || { reap "$pid"; fail "the auto-arm health check read a live, progressing watcher as unhealthy"; }
+  second_watcher_verdict "$state" "$fakebin" "$grace" "$probe" \
+    || { reap "$pid"; fail "a re-arm refused a live, progressing watcher: $(cat "$probe")"; }
+  grep -F "watcher: already running pid $pid" "$probe" >/dev/null \
+    || { reap "$pid"; fail "a re-arm did not attach to the live watcher: $(cat "$probe")"; }
+  grep -F 'absorbed stale (paused' "$state/.watch-triage.log" >/dev/null \
+    || { reap "$pid"; fail "the fixture never reached the parked-pane absorb path"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "absorbing parked panes printed a wake: $(cat "$out")"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a poll that outlasts the grace over many parked panes keeps the beacon fresh and the re-arm attaches"
+}
+
+test_watcher_blocked_in_one_call_still_reads_stale() {
+  # The refresh only happens between units of work, so a watcher stuck inside a
+  # single call is still reported stale and re-arm still refuses it.
+  local dir state fakebin out probe capture count_file windows pid grace=3
+  dir=$(make_case blocked-one-call); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; probe="$dir/probe.out"; capture="$dir/pane.txt"; count_file="$dir/captures"
+  windows=$(park_paused_panes "$state" "$capture" 1)
+  export FM_FAKE_CREW_STATE='state: paused · source: status-log · holding for the upstream tool release'
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOWS="$windows" FM_FAKE_TMUX_CAPTURE="$capture" \
+    FM_FAKE_TMUX_CAPTURE_DELAY=15 FM_FAKE_TMUX_CAPTURE_COUNT_FILE="$count_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_STATE_OVERRIDE="$state" \
+    FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=999 \
+    FM_GUARD_GRACE="$grace" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_captures "$count_file" 1 "$pid" \
+    || { reap "$pid"; fail "watcher exited before its blocking capture: $(cat "$out")"; }
+  sleep $(( grace + 2 ))
+  kill -0 "$pid" 2>/dev/null || fail "the blocked watcher exited early: $(cat "$out")"
+  ! watcher_reads_healthy "$state" "$grace" \
+    || { reap "$pid"; fail "a watcher blocked in one call still read healthy"; }
+  if second_watcher_verdict "$state" "$fakebin" "$grace" "$probe"; then
+    reap "$pid"; fail "a re-arm attached to a watcher blocked in one call: $(cat "$probe")"
+  fi
+  grep -F 'heartbeat is stale' "$probe" >/dev/null \
+    || { reap "$pid"; fail "the stale refusal did not explain itself: $(cat "$probe")"; }
+  reap "$pid"
+  unset FM_FAKE_CREW_STATE
+  pass "a watcher blocked inside one call still reads stale and re-arm still refuses it"
+}
+
 # --- afk coherence: the daemon owns triage; the watcher does not double-triage ---
 
 test_afk_signal_records_heartbeat_endpoint() {
@@ -6251,6 +6367,8 @@ test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
 test_beacon_stays_fresh_while_absorbing
+test_long_poll_over_parked_panes_keeps_beacon_fresh
+test_watcher_blocked_in_one_call_still_reads_stale
 test_afk_signal_records_heartbeat_endpoint
 test_afk_present_reverts_watcher_to_one_shot
 test_afk_paused_changed_pane_hands_off_plain_stale

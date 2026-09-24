@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression test for the fm-spawn.sh treehouse-get worktree-detection settle
-# loop (bin/fm-spawn.sh, the `for _ in $(seq 1 60)` loop after `treehouse get`).
+# loop (bin/fm-spawn.sh, the FM_SPAWN_WORKTREE_WAIT_SECS-bounded loop after `treehouse get`).
 #
 # On some tmux/WSL setups a brand-new window's pane_current_path transiently
 # reports a stale, unrelated-but-real path on the very first poll, before the
@@ -221,9 +221,52 @@ test_primary_checkout_that_never_settles_fails_at_the_deadline() {
   pass "a pane stuck on the primary checkout fails loudly at the deadline"
 }
 
+# A loaded host's pool can take longer than the default window to hand a copy
+# over. A raised FM_SPAWN_WORKTREE_WAIT_SECS keeps waiting past the default and
+# lands on the settled copy; a lowered one refuses at its own deadline and says
+# which window it used.
+test_worktree_wait_window_is_configurable() {
+  local rec id out status reads
+  id=settle-slow-pool-z5
+  rec=$(make_primary_case settle-slow-pool "$id" 70)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+  out=$(FM_SPAWN_WORKTREE_WAIT_SECS=90 run_settle_spawn "$id")
+  status=$?
+  expect_code 0 "$status" "a raised wait should outlast a pool slower than the default window"$'\n'"$out"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
+    "meta did not record the worktree the slow pool settled into"
+
+  id=settle-short-window-z6
+  rec=$(make_primary_case settle-short-window "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+  out=$(FM_SPAWN_WORKTREE_WAIT_SECS=5 run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a pane that never settled"$'\n'"$out"
+  assert_contains "$out" "did not enter an isolated worktree within 5s" \
+    "the refusal did not name the configured window"
+  reads=$(cat "$COUNTFILE")
+  [ "$reads" -eq 5 ] || fail "a 5s window polled the pane $reads times"
+
+  id=settle-zero-window-z7
+  rec=$(make_primary_case settle-zero-window "$id" 100000)
+  read_settle_record "$rec"
+  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+  out=$(FM_SPAWN_WORKTREE_WAIT_SECS=00 run_settle_spawn "$id")
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn accepted a pane that never settled"$'\n'"$out"
+  assert_contains "$out" "did not enter an isolated worktree within 60s" \
+    "a zero-padded zero window did not fall back to the default"
+  reads=$(cat "$COUNTFILE")
+  [ "$reads" -eq 60 ] || fail "a zero-padded zero window polled the pane $reads times"
+  pass "the treehouse-get worktree wait window is configurable"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted
 test_primary_checkout_that_never_settles_fails_at_the_deadline
+test_worktree_wait_window_is_configurable
 
 echo "# all fm-spawn-worktree-settle tests passed"
