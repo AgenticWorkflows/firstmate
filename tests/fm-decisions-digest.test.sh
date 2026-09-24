@@ -143,6 +143,8 @@ assert_grep "Pick a &lt;script&gt;shape&lt;/script&gt;" "$page" "item text is HT
 assert_no_grep "<script>" "$page" "no raw markup from the digest reaches the page"
 assert_grep "<code>docs/plan.md</code>" "$page" "backticked paths render as code"
 assert_grep '<span class="tag now">today</span>' "$page" "an urgent tag keeps its own tone"
+assert_contains "$(cat "$page")" '<p class="pick">merge it</p><p class="ask">Green and idle.</p>' \
+  "a card renders the recommendation above the plain-English line, matching the page's own caption"
 alpha_at=$(grep -n "Alpha Product" "$page" | cut -d: -f1)
 parked_at=$(grep -n "Parked Things" "$page" | cut -d: -f1)
 [ "$alpha_at" -lt "$parked_at" ] || fail "an all-parked section sorts after sections needing the captain"

@@ -298,8 +298,9 @@ def esc: tostring | @html | gsub("`(?<c>[^`]+)`"; "<code>\(.c)</code>");
 def has($k): (.[$k] // "") | tostring | length > 0;
 def tag: if has("tag") then "<span class=\"tag \(if .tone == "go" or .tone == "now" then .tone else "wait" end)\">\(.tag | esc)</span>" else "" end;
 def card:
-  "<div class=\"card \(.kind)\"><span class=\"kind \(.kind)\">\(kindlabel)</span><b>\(.title | esc)\(tag)</b>\n<p class=\"ask\">\(.line | esc)</p>"
+  "<div class=\"card \(.kind)\"><span class=\"kind \(.kind)\">\(kindlabel)</span><b>\(.title | esc)\(tag)</b>\n"
   + (if has("rec") then "<p class=\"pick\">\(.rec | esc)</p>" else "" end)
+  + "<p class=\"ask\">\(.line | esc)</p>"
   + (if has("alt") then "<p class=\"alt\">\(.alt | esc)</p>" else "" end)
   + (if has("link") and (.link | test("^https://[^\"<>\\s]+$")) then "<p class=\"alt\"><a href=\"\(.link)\">\(.link | esc)</a></p>" else "" end)
   + "</div>";
