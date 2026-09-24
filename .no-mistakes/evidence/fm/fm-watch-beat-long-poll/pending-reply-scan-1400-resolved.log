@@ -1,0 +1,6 @@
+== HEAD (eadbe45)
+records: 1401 (all phase=resolved, never escalated)
+fm_pending_reply_tick wall time: 0.22s
+== BASE (ac2ed3b)
+records: 1401 (all phase=resolved, never escalated)
+fm_pending_reply_tick wall time: 299.96s

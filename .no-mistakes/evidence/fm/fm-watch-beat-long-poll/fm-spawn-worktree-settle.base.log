@@ -1,0 +1,7 @@
+ok - a single transient stale pane_current_path read is not accepted as the worktree
+ok - an already-settled pane confirms on the next read, not a whole extra cycle
+ok - a transient primary-checkout pane read is not accepted as the worktree
+ok - a pane stuck on the primary checkout fails loudly at the deadline
+not ok - a raised wait should outlast a pool slower than the default window
+warning: /tmp/fm-spawn-worktree-settle.HLvJji/settle-slow-pool/home/data/settle-slow-pool-z5/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+error: treehouse get did not enter an isolated worktree within 60s (last seen '/tmp/fm-spawn-worktree-settle.HLvJji/settle-slow-pool/primary': it is the repository's primary checkout (its git dir is the spawning project's common git dir); spawning project '/tmp/fm-spawn-worktree-settle.HLvJji/settle-slow-pool/mate'); inspect window firstmate:fm-settle-slow-pool-z5: expected exit 0, got 1

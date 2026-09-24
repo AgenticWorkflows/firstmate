@@ -1,0 +1,6 @@
+== BASE test_long_poll_over_parked_panes_keeps_beacon_fresh
+not ok - a progressing watcher's beacon aged 11s mid-poll (grace 4s)
+rc=1
+== BASE test_watcher_blocked_in_one_call_still_reads_stale
+ok - a watcher blocked inside one call still reads stale and re-arm still refuses it
+rc=0

@@ -1,0 +1,9 @@
+== HEAD test_long_poll_over_parked_panes_keeps_beacon_fresh
+ok - a poll that outlasts the grace over many parked panes keeps the beacon fresh and the re-arm attaches
+rc=0
+== HEAD test_watcher_blocked_in_one_call_still_reads_stale
+ok - a watcher blocked inside one call still reads stale and re-arm still refuses it
+rc=0
+== HEAD test_beacon_stays_fresh_while_absorbing
+ok - the liveness beacon stays fresh while the watcher absorbs benign wakes (fm-guard never false-alarms)
+rc=0
