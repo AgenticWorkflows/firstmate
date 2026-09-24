@@ -213,6 +213,12 @@ See [`trace-context.md`](trace-context.md) for carrier semantics, supported rout
 
 See [`fleet-ledger.md`](fleet-ledger.md) for the opt-in setup, record contract, and limits.
 
+## Daily decisions digest (data/decisions-digest/, config/systemd/)
+
+The daily decisions digest is opt-in per home: `bin/fm-decisions-digest.sh install` writes this home's systemd user timer and service into `config/systemd/`, links them into the user manager, and enables the timer.
+Each run keeps the fixed claude.ai page URL and its latest inputs and outputs under `data/decisions-digest/`.
+The [script header](../bin/fm-decisions-digest.sh) owns the schedule options, those files, the environment overrides, the failure posture, and why the publish step needs a background Claude Code session.
+
 ## Turn-end pane-churn absorb (config/turnend-churn-absorb)
 
 The optional local, gitignored `config/turnend-churn-absorb` presence flag opts this home into a default-off third form of positive work evidence in watcher triage.
